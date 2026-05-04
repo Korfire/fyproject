@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: app-backend
+    env: node
+    region: oregon
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false          # You'll paste this in the Render dashboard
+      - key: FRONTEND_URL
+        sync: false          # Paste your Vercel frontend URL here after deploying frontend
+      - key: NODE_ENV
+        value: production
