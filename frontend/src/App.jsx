@@ -339,8 +339,13 @@ const css = `
   .card-body {
     position: absolute; bottom: 0; left: 0; right: 0;
     padding: 8px 10px 10px;
-    background: linear-gradient(to top, rgba(20,20,20,1) 0%, transparent 100%);
+    background: linear-gradient(to top, rgba(20,20,20,1) 0%, rgba(20,20,20,0.85) 70%, transparent 100%);
     z-index: 3;
+    transition: padding 0.25s ease;
+  }
+  .card:hover .card-body {
+    padding: 10px 10px 12px;
+    background: linear-gradient(to top, rgba(10,10,10,1) 0%, rgba(10,10,10,0.95) 80%, transparent 100%);
   }
   .card-title {
     font-size: 0.78rem; font-weight: 700;
@@ -357,10 +362,12 @@ const css = `
   .card-genre.movie { color: var(--purple-lt); }
   .card-desc {
     font-size: 0.65rem; color: var(--text-sec);
-    line-height: 1.4; margin-top: 4px;
-    display: -webkit-box; -webkit-line-clamp: 3;
+    line-height: 1.4; margin-top: 5px;
+    display: none;
+    -webkit-line-clamp: 4;
     -webkit-box-orient: vertical; overflow: hidden;
   }
+  .card:hover .card-desc { display: -webkit-box; }
 
   /* ── LOADING ── */
   .loading { padding: 4rem 0; text-align: center; }
@@ -632,7 +639,7 @@ export default function App() {
             {/* Type Tabs */}
             <div className="tabs">
               {["music","movie"].map((t) => (
-                <button key={t} className={`tab ${t} ${tab===t?"active":""}`} onClick={() => setTab(t)}>
+                <button key={t} className={`tab ${t} ${tab===t?"active":""}`} onClick={() => { setTab(t); setResults([]); setErrorMsg(""); }}>
                   <span className="tab-dot"/>
                   {t === "music" ? "🎵 Music" : "🎬 Movies"}
                 </button>
@@ -686,7 +693,6 @@ export default function App() {
                     </div>
                     <div className="card-overlay">
                       <div className="card-play">▶</div>
-                      {item.description && <p className="card-desc">{item.description}</p>}
                     </div>
                     <div className="card-body">
                       <div className="card-title">{item.title}</div>
@@ -696,6 +702,7 @@ export default function App() {
                       <div className={`card-genre ${tab}`}>
                         {item.genre}{tab==="movie" && item.rating ? ` · ⭐ ${item.rating}` : ""}
                       </div>
+                      {item.description && <p className="card-desc">{item.description}</p>}
                     </div>
                   </div>
                 ))}
@@ -728,7 +735,22 @@ export default function App() {
           ) : recs.length > 0 ? (
             recs.map((rec, i) => (
               <div key={i} className="rec fade" style={{ animationDelay: `${i*0.06}s` }}
-                onClick={() => { setTab(rec.type); setQuery(rec.title); setTimeout(() => handleSearch(rec.title), 50); }}>
+                onClick={() => {
+                  setTab(rec.type);
+                  setQuery(rec.title);
+                  setErrorMsg("");
+                  setResults([{
+                    id: i,
+                    title: rec.title,
+                    artist: rec.creator,
+                    director: rec.creator,
+                    year: rec.year,
+                    genre: rec.genre,
+                    emoji: rec.emoji,
+                    description: rec.why,
+                    mediaType: rec.type,
+                  }]);
+                }}>
                 <div className="rec-rank">{i + 1}</div>
                 <div className={`rec-art ${rec.type}`}>
                   {rec.emoji || (rec.type==="music"?"🎵":"🎬")}
