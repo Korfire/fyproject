@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 const API_BASE = import.meta.env.VITE_API_URL || "";
 const STORAGE_KEY = "app:history";
 const RECS_KEY    = "app:recs";
+const THEME_KEY   = "app:theme";
 const MODEL       = "claude-sonnet-4-20250514";
 
 // ─── Storage helpers ──────────────────────────────────────────────────────────
@@ -26,6 +27,53 @@ async function callClaude(systemPrompt, userMessage, maxTokens = 1500) {
   if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `HTTP ${res.status}`); }
   const data = await res.json();
   return (data.content || []).map((b) => b.text || "").join("").replace(/```json|```/g, "").trim();
+}
+
+// ─── Cover art + real "play" link enrichment ──────────────────────────────────
+// The AI results agent generates plausible titles, but has no real artwork or
+// destination URL. After results come back, we look each title up against a
+// real catalog (both proxied through the backend, matching the API-key-hiding
+// pattern used for the Groq call above) and attach real cover art + a real
+// link. If no match is found the UI falls back to the emoji, nothing breaks.
+async function enrichMusic(item) {
+  try {
+    const q = encodeURIComponent(`${item.title} ${item.artist || ""}`.trim());
+    const res = await fetch(`${API_BASE}/api/music-search?query=${q}`);
+    if (!res.ok) throw new Error("music lookup failed");
+    const data = await res.json();
+    const hit = data.results?.[0];
+    if (!hit) return item;
+    return {
+      ...item,
+      artwork: hit.artworkUrl100 ? hit.artworkUrl100.replace("100x100", "600x600") : null,
+      playUrl: hit.trackViewUrl || hit.collectionViewUrl || null,
+    };
+  } catch { return item; }
+}
+
+async function enrichMovie(item) {
+  try {
+    const params = new URLSearchParams({ query: item.title });
+    if (item.year) params.set("year", String(item.year).slice(0, 4));
+    const res = await fetch(`${API_BASE}/api/movie-search?${params.toString()}`);
+    if (!res.ok) throw new Error("movie lookup failed");
+    const data = await res.json();
+    const hit = data.results?.[0];
+    if (!hit) return item;
+    return {
+      ...item,
+      artwork: hit.poster_path ? `https://image.tmdb.org/t/p/w500${hit.poster_path}` : null,
+      playUrl: hit.id ? `https://www.themoviedb.org/movie/${hit.id}/watch` : null,
+    };
+  } catch { return item; }
+}
+
+async function enrichItem(item) {
+  return (item.type || item.mediaType) === "music" ? enrichMusic(item) : enrichMovie(item);
+}
+
+async function enrichAll(items) {
+  return Promise.all(items.map(enrichItem));
 }
 
 // ─── Premium Liquid-Glass Dark UI — Ember Orange ──────────────────────────────
@@ -66,19 +114,76 @@ const css = `
 
     --shadow-card: 0 4px 24px rgba(0,0,0,0.45), 0 1px 4px rgba(0,0,0,0.3);
     --shadow-hover: 0 16px 48px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,117,40,0.22), 0 0 32px rgba(255,117,40,0.12);
+
+    --header-bg:   rgba(7,11,16,0.75);
+    --panel-bg:    rgba(10,14,20,0.65);
+    --card-bg-1:   rgba(255,255,255,0.07);
+    --card-bg-2:   rgba(255,255,255,0.02);
+    --text-fade:   rgba(239,241,245,0.6);
+    --rec-rank-color: rgba(255,255,255,0.08);
+    --wash-1:      rgba(255,117,40,0.07);
+    --wash-2:      rgba(56,189,248,0.05);
+
+    /* Fixed — the cover-art tile is always dark (poster/album aesthetic), so
+       text sitting on top of it stays legible regardless of overall theme. */
+    --tile-text:     #EFF1F5;
+    --tile-text-sec: #7D8590;
+    --tile-music:    #38BDF8;
+    --tile-orange:   #FF9A5C;
+  }
+
+  /* ── LIGHT THEME — same variable names, flipped values ── */
+  :root[data-theme="light"] {
+    --bg:          #F7F5F1;
+    --bg2:         #FFFFFF;
+    --surface:     rgba(20,24,31,0.035);
+    --surface2:    rgba(20,24,31,0.055);
+    --surface3:    rgba(20,24,31,0.09);
+    --glass-border: rgba(20,24,31,0.10);
+    --glass-hi:    inset 0 1px 0 rgba(255,255,255,0.7);
+
+    --orange:      #E8611A;
+    --orange-dk:   #B84A0E;
+    --orange-lt:   #C2530F;
+    --orange-glow: rgba(232,97,26,0.22);
+    --orange-dim:  rgba(232,97,26,0.10);
+    --orange-ultra-dim: rgba(232,97,26,0.06);
+
+    --music:       #0284C7;
+    --movie:       #E8611A;
+    --music-dim:   rgba(2,132,199,0.10);
+    --movie-dim:   rgba(232,97,26,0.10);
+
+    --text:        #171A21;
+    --text-sec:    #5B6472;
+    --text-dim:    #9AA1AC;
+    --border:      rgba(20,24,31,0.09);
+
+    --shadow-card: 0 4px 18px rgba(23,26,33,0.07), 0 1px 3px rgba(23,26,33,0.05);
+    --shadow-hover: 0 16px 38px rgba(23,26,33,0.12), 0 0 0 1px rgba(232,97,26,0.22), 0 0 26px rgba(232,97,26,0.08);
+
+    --header-bg:   rgba(255,255,255,0.75);
+    --panel-bg:    rgba(255,255,255,0.68);
+    --card-bg-1:   rgba(20,24,31,0.035);
+    --card-bg-2:   rgba(20,24,31,0.012);
+    --text-fade:   rgba(23,26,33,0.55);
+    --rec-rank-color: rgba(20,24,31,0.10);
+    --wash-1:      rgba(232,97,26,0.06);
+    --wash-2:      rgba(2,132,199,0.04);
   }
 
   html, body, #root { height: 100%; }
   body {
     background: var(--bg);
     background-image:
-      radial-gradient(ellipse 70% 55% at 15% 0%, rgba(255,117,40,0.07) 0%, transparent 55%),
-      radial-gradient(ellipse 55% 40% at 85% 95%, rgba(56,189,248,0.05) 0%, transparent 50%);
+      radial-gradient(ellipse 70% 55% at 15% 0%, var(--wash-1) 0%, transparent 55%),
+      radial-gradient(ellipse 55% 40% at 85% 95%, var(--wash-2) 0%, transparent 50%);
     color: var(--text);
     font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    transition: background-color 0.35s ease, color 0.35s ease;
   }
   .app { min-height: 100vh; display: flex; flex-direction: column; }
 
@@ -88,10 +193,10 @@ const css = `
     padding: 0 4%;
     height: 72px;
     display: flex; align-items: center; justify-content: space-between;
-    background: rgba(7,11,16,0.75);
+    background: var(--header-bg);
     backdrop-filter: blur(24px) saturate(180%);
     -webkit-backdrop-filter: blur(24px) saturate(180%);
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-bottom: 1px solid var(--border);
     box-shadow: 0 1px 0 rgba(255,117,40,0.08), 0 4px 20px rgba(0,0,0,0.3);
   }
   .logo { display: flex; align-items: center; gap: 14px; text-decoration: none; }
@@ -127,6 +232,25 @@ const css = `
     border-radius: 99px;
     box-shadow: var(--glass-hi), 0 0 16px rgba(255,117,40,0.08);
   }
+  .header-right { display: flex; align-items: center; gap: 10px; }
+  .theme-toggle {
+    width: 36px; height: 36px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface);
+    border: 1px solid var(--glass-border);
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 0.95rem;
+    color: var(--text-sec);
+    transition: all 0.25s cubic-bezier(0.34,1.56,0.64,1);
+    box-shadow: var(--glass-hi);
+  }
+  .theme-toggle:hover {
+    border-color: rgba(255,117,40,0.4);
+    color: var(--orange-lt);
+    background: var(--orange-ultra-dim);
+    transform: translateY(-1px) rotate(20deg);
+  }
 
   /* ── LAYOUT ── */
   .main { flex: 1; display: grid; grid-template-columns: 1fr 320px; }
@@ -151,7 +275,7 @@ const css = `
   .tabs {
     display: flex; gap: 3px;
     margin-bottom: 1.4rem;
-    background: rgba(255,255,255,0.04);
+    background: var(--surface);
     border: 1px solid var(--glass-border);
     padding: 4px;
     border-radius: var(--radius-md);
@@ -173,16 +297,16 @@ const css = `
   .tab:hover .tab-dot { transform: scale(1.5); }
   .tab.music .tab-dot { background: var(--music); box-shadow: 0 0 6px rgba(56,189,248,0.5); }
   .tab.movie .tab-dot { background: var(--orange); box-shadow: 0 0 6px var(--orange-glow); }
-  .tab.active.music { background: rgba(56,189,248,0.12); color: var(--music); box-shadow: var(--glass-hi); }
-  .tab.active.movie { background: rgba(255,117,40,0.14); color: var(--orange-lt); box-shadow: var(--glass-hi); }
+  .tab.active.music { background: var(--music-dim); color: var(--music); box-shadow: var(--glass-hi); }
+  .tab.active.movie { background: var(--orange-dim); color: var(--orange-lt); box-shadow: var(--glass-hi); }
   .tab:hover:not(.active) { background: var(--surface2); color: var(--text); }
 
   /* ── SEARCH ROW ── */
   .search-row { display: flex; gap: 10px; }
   .search-input {
     flex: 1; height: 52px;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.09);
+    background: var(--surface);
+    border: 1px solid var(--glass-border);
     border-radius: var(--radius-md);
     padding: 0 20px;
     font-family: 'Inter', sans-serif;
@@ -196,7 +320,7 @@ const css = `
   .search-input::placeholder { color: var(--text-dim); }
   .search-input:focus {
     border-color: rgba(255,117,40,0.5);
-    background: rgba(255,255,255,0.055);
+    background: var(--surface2);
     box-shadow: 0 0 0 3px var(--orange-dim), var(--glass-hi), inset 0 1px 3px rgba(0,0,0,0.2);
   }
   .btn {
@@ -232,8 +356,8 @@ const css = `
   .btn-search:disabled { opacity: 0.35; cursor: not-allowed; }
   .btn-mic {
     width: 52px; padding: 0;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.09);
+    background: var(--surface);
+    border: 1px solid var(--glass-border);
     color: var(--text-sec);
     font-size: 1.1rem;
     backdrop-filter: blur(10px);
@@ -317,8 +441,8 @@ const css = `
     border-radius: var(--radius-md);
     overflow: hidden;
     cursor: pointer;
-    background: linear-gradient(160deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0.02) 100%);
-    border: 1px solid rgba(255,255,255,0.09);
+    background: linear-gradient(160deg, var(--card-bg-1) 0%, var(--card-bg-2) 100%);
+    border: 1px solid var(--glass-border);
     box-shadow: var(--shadow-card), var(--glass-hi);
     transition: transform 0.30s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.30s ease, border-color 0.30s ease, z-index 0s 0.30s;
     backdrop-filter: blur(8px);
@@ -361,6 +485,14 @@ const css = `
     transition: transform 0.3s ease;
   }
   .card:hover .card-art > span { transform: scale(1.1); }
+  .cover-img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    z-index: 0;
+    transition: transform 0.3s ease;
+  }
+  .card:hover .cover-img { transform: scale(1.08); }
   .card-overlay {
     position: absolute; inset: 0;
     display: flex; flex-direction: column; justify-content: flex-start;
@@ -395,14 +527,15 @@ const css = `
     font-size: 0.76rem; font-weight: 700;
     line-height: 1.3; margin-bottom: 3px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    color: var(--tile-text);
   }
-  .card-meta { font-size: 0.60rem; color: var(--text-sec); }
+  .card-meta { font-size: 0.60rem; color: var(--tile-text-sec); }
   .card-genre {
     font-size: 0.55rem; font-weight: 700;
     letter-spacing: 0.12em; text-transform: uppercase; margin-top: 4px;
   }
-  .card-genre.music { color: var(--music); }
-  .card-genre.movie { color: var(--orange-lt); }
+  .card-genre.music { color: var(--tile-music); }
+  .card-genre.movie { color: var(--tile-orange); }
   .card-desc {
     font-size: 0.63rem; color: rgba(125,133,144,0.9);
     line-height: 1.55; margin-top: 6px;
@@ -438,7 +571,7 @@ const css = `
   /* ── EMPTY STATE ── */
   .empty {
     padding: 6rem 2rem; text-align: center;
-    border: 1px dashed rgba(255,255,255,0.06);
+    border: 1px dashed var(--border);
     border-radius: var(--radius-lg); margin-top: 1rem;
   }
   .empty-icon { font-size: 3rem; opacity: 0.15; margin-bottom: 1.2rem; }
@@ -451,8 +584,8 @@ const css = `
 
   /* ── RIGHT PANEL — Glass Sidebar ── */
   .right-panel {
-    background: rgba(10,14,20,0.65);
-    border-left: 1px solid rgba(255,255,255,0.06);
+    background: var(--panel-bg);
+    border-left: 1px solid var(--border);
     backdrop-filter: blur(24px) saturate(160%);
     -webkit-backdrop-filter: blur(24px) saturate(160%);
     padding: 2rem 1.4rem;
@@ -467,7 +600,7 @@ const css = `
     font-family: 'Sora', sans-serif;
     font-size: 1.05rem; font-weight: 800;
     letter-spacing: -0.02em; margin-bottom: 4px;
-    background: linear-gradient(120deg, var(--text) 0%, rgba(239,241,245,0.6) 100%);
+    background: linear-gradient(120deg, var(--text) 0%, var(--text-fade) 100%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
   }
   .panel-sub { font-size: 0.65rem; color: var(--text-dim); font-weight: 500; letter-spacing: 0.04em; }
@@ -483,8 +616,8 @@ const css = `
     border: 1px solid transparent;
   }
   .rec:hover {
-    background: rgba(255,255,255,0.05);
-    border-color: rgba(255,255,255,0.07);
+    background: var(--surface2);
+    border-color: var(--border);
     transform: translateX(3px);
     box-shadow: var(--glass-hi);
   }
@@ -492,7 +625,7 @@ const css = `
   .rec-rank {
     font-family: 'Sora', sans-serif;
     font-size: 1.3rem; font-weight: 900;
-    color: rgba(255,255,255,0.08);
+    color: var(--rec-rank-color);
     min-width: 26px; text-align: center;
     line-height: 1; font-style: italic;
   }
@@ -501,11 +634,17 @@ const css = `
     display: flex; align-items: center; justify-content: center;
     font-size: 1.35rem; flex-shrink: 0;
     position: relative; overflow: hidden;
-    border: 1px solid rgba(255,255,255,0.08);
+    border: 1px solid var(--glass-border);
     box-shadow: var(--glass-hi);
   }
   .rec-art.music { background: linear-gradient(135deg, #03101E, #071E36); }
   .rec-art.movie { background: linear-gradient(135deg, #140800, #241205); }
+  .rec-cover-img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    z-index: 0;
+  }
   .rec-play {
     position: absolute; inset: 0;
     background: rgba(255,117,40,0.88);
@@ -533,13 +672,13 @@ const css = `
   }
 
   /* ── HISTORY ── */
-  .history { margin-top: 2rem; padding-top: 1.8rem; border-top: 1px solid rgba(255,255,255,0.06); }
+  .history { margin-top: 2rem; padding-top: 1.8rem; border-top: 1px solid var(--border); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 0.9rem; }
   .chip {
     font-size: 0.6rem; font-weight: 600;
     padding: 5px 11px;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: var(--surface);
+    border: 1px solid var(--glass-border);
     border-radius: 99px;
     color: var(--text-sec);
     cursor: pointer;
@@ -547,7 +686,7 @@ const css = `
     letter-spacing: 0.04em;
     box-shadow: var(--glass-hi);
   }
-  .chip:hover { background: rgba(255,255,255,0.07); color: var(--text); border-color: rgba(255,117,40,0.35); transform: translateY(-1px); }
+  .chip:hover { background: var(--surface2); color: var(--text); border-color: rgba(255,117,40,0.35); transform: translateY(-1px); }
   .chip.music:hover { color: var(--music); border-color: rgba(56,189,248,0.35); }
   .chip.movie:hover { color: var(--orange-lt); border-color: rgba(255,117,40,0.35); }
 
@@ -566,7 +705,7 @@ const css = `
   /* ── SCROLLBAR ── */
   .right-panel::-webkit-scrollbar { width: 3px; }
   .right-panel::-webkit-scrollbar-track { background: transparent; }
-  .right-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 99px; }
+  .right-panel::-webkit-scrollbar-thumb { background: var(--glass-border); border-radius: 99px; }
   .right-panel::-webkit-scrollbar-thumb:hover { background: rgba(255,117,40,0.3); }
 
   /* ── FADE ANIMATION ── */
@@ -592,6 +731,7 @@ export default function App() {
   const [history, setHistory]         = useState(() => store.get(STORAGE_KEY) || []);
   const [recs, setRecs]               = useState(() => store.get(RECS_KEY)    || []);
   const [recsLoading, setRecsLoading] = useState(false);
+  const [theme, setTheme] = useState(() => store.get(THEME_KEY) || "dark");
   const recognitionRef = useRef(null);
 
   useEffect(() => {
@@ -600,6 +740,11 @@ export default function App() {
     document.head.appendChild(el);
     return () => el.remove();
   }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    store.set(THEME_KEY, theme);
+  }, [theme]);
 
   const generateRecs = useCallback(async (hist) => {
     if (!hist?.length) return;
@@ -616,8 +761,9 @@ export default function App() {
         `User search history context: ${ctx}`
       );
       const data = JSON.parse(raw);
-      setRecs(data);
-      store.set(RECS_KEY, data);
+      const enrichedRecs = await enrichAll(data);
+      setRecs(enrichedRecs);
+      store.set(RECS_KEY, enrichedRecs);
     } catch (e) { console.error("Recs error:", e.message); }
     finally { setRecsLoading(false); }
   }, []);
@@ -643,8 +789,10 @@ export default function App() {
          No markdown, no extra text.`,
         `Search: "${intent.refined_query}" | Genre hints: ${(intent.genre_hints||[]).join(", ")||"any"} | Mood: ${intent.mood||"any"}`
       );
-      const items = JSON.parse(resultsRaw);
-      setResults(items.map((i) => ({ ...i, mediaType: tab })));
+      const items = JSON.parse(resultsRaw).map((i) => ({ ...i, type: tab }));
+      setAgentStatus("Fetching cover art…");
+      const enriched = await enrichAll(items);
+      setResults(enriched.map((i) => ({ ...i, mediaType: tab })));
       setAgentStatus("");
       const entry = { query: q, type: tab, ts: Date.now() };
       const updated = [entry, ...history.filter((h) => h.query !== q)].slice(0, 20);
@@ -688,7 +836,17 @@ export default function App() {
             <div className="logo-sub">RAG · Agentic AI · FYP</div>
           </div>
         </div>
-        <div className="nav-badge">✦ Context-Aware</div>
+        <div className="header-right">
+          <div className="nav-badge">✦ Context-Aware</div>
+          <button
+            className="theme-toggle"
+            onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            aria-label="Toggle color theme"
+          >
+            {theme === "dark" ? "☀️" : "🌙"}
+          </button>
+        </div>
       </header>
 
       <div className="main">
@@ -749,9 +907,24 @@ export default function App() {
               <div className="section-label">Results · {results.length} found</div>
               <div className="grid">
                 {results.map((item, i) => (
-                  <div key={item.id || i} className={`card ${tab} fade`} style={{ animationDelay: `${i * 0.05}s` }}>
+                  <div
+                    key={item.id || i}
+                    className={`card ${tab} fade`}
+                    style={{ animationDelay: `${i * 0.05}s` }}
+                    onClick={() => item.playUrl && window.open(item.playUrl, "_blank", "noopener,noreferrer")}
+                    title={item.playUrl ? (tab === "music" ? "Open in Apple Music" : "Watch on TMDB") : "No external link found for this title"}
+                  >
                     <div className={`card-art ${tab==="movie"?"movie":""}`}>
-                      <span style={{ position:"relative", zIndex:2 }}>{item.emoji || (tab==="music"?"🎵":"🎬")}</span>
+                      {item.artwork && (
+                        <img
+                          src={item.artwork}
+                          alt={item.title}
+                          className="cover-img"
+                          loading="lazy"
+                          onError={(e) => { e.target.style.display = "none"; e.target.nextSibling.style.display = "inline"; }}
+                        />
+                      )}
+                      <span style={{ position:"relative", zIndex:2, display: item.artwork ? "none" : "inline" }}>{item.emoji || (tab==="music"?"🎵":"🎬")}</span>
                     </div>
                     <div className="card-overlay">
                       <div className="card-play">▶</div>
@@ -797,7 +970,12 @@ export default function App() {
           ) : recs.length > 0 ? (
             recs.map((rec, i) => (
               <div key={i} className="rec fade" style={{ animationDelay: `${i*0.06}s` }}
+                title={rec.playUrl ? (rec.type === "music" ? "Open in Apple Music" : "Watch on TMDB") : undefined}
                 onClick={() => {
+                  if (rec.playUrl) {
+                    window.open(rec.playUrl, "_blank", "noopener,noreferrer");
+                    return;
+                  }
                   setTab(rec.type);
                   setQuery(rec.title);
                   setErrorMsg("");
@@ -806,12 +984,21 @@ export default function App() {
                     artist: rec.creator, director: rec.creator,
                     year: rec.year, genre: rec.genre,
                     emoji: rec.emoji, description: rec.why,
-                    mediaType: rec.type,
+                    mediaType: rec.type, type: rec.type,
                   }]);
                 }}>
                 <div className="rec-rank">{i + 1}</div>
                 <div className={`rec-art ${rec.type}`}>
-                  {rec.emoji || (rec.type==="music"?"🎵":"🎬")}
+                  {rec.artwork && (
+                    <img
+                      src={rec.artwork}
+                      alt={rec.title}
+                      className="rec-cover-img"
+                      loading="lazy"
+                      onError={(e) => { e.target.style.display = "none"; e.target.nextSibling.style.display = "inline"; }}
+                    />
+                  )}
+                  <span style={{ display: rec.artwork ? "none" : "inline" }}>{rec.emoji || (rec.type==="music"?"🎵":"🎬")}</span>
                   <div className="rec-play">▶</div>
                 </div>
                 <div className="rec-info">
